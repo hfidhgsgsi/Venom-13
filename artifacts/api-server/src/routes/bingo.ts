@@ -8,7 +8,6 @@ import { awardBingoPayout } from "../lib/payout";
 const router: IRouter = Router();
 const MAX_CARDS = 4;
 const CARD_COUNT = 500;
-const DEFAULT_BINGO_PAYOUT = "2280.00";
 const CARD_STAKE = 4;
 const SELECTION_DURATION_MS = 60_000;
 
@@ -52,9 +51,8 @@ export async function publishBingoRoundUpdate(roundId?: number) {
   return snapshot;
 }
 
-function getBingoPayoutAmount() {
-  const configured = process.env["BINGO_PAYOUT_AMOUNT"]?.trim();
-  return configured && /^\d+(?:\.\d{1,2})?$/.test(configured) ? Number(configured).toFixed(2) : DEFAULT_BINGO_PAYOUT;
+function getBingoPayoutAmount(cardCount: number) {
+  return (cardCount * CARD_STAKE).toFixed(2);
 }
 
 function splitPayoutAmount(total: string, winnerCount: number) {
@@ -132,7 +130,7 @@ async function resolveRoundWinners(roundId: number) {
     const winningCards = cards.filter((card) => winnerCard(card.grid, called)).sort((left, right) => left.id - right.id);
     const winningPlayers = [...new Map(winningCards.map((card) => [card.telegramId, card])).values()];
     if (!winningPlayers.length) return [] as BingoWinner[];
-    const payoutAmounts = splitPayoutAmount(getBingoPayoutAmount(), winningPlayers.length);
+    const payoutAmounts = splitPayoutAmount(getBingoPayoutAmount(cards.length), winningPlayers.length);
     const winners: BingoWinner[] = [];
     for (const [index, card] of winningPlayers.entries()) {
       const result = await awardBingoPayout({ roundId, cardId: card.id, telegramId: card.telegramId, amount: payoutAmounts[index]! }, tx);
