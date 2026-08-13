@@ -12,6 +12,8 @@ const DEFAULT_BINGO_PAYOUT = "2280.00";
 const CARD_STAKE = 4;
 const SELECTION_DURATION_MS = 60_000;
 
+type BingoWinner = { telegramId: number; name: string; cardNumber: number; payout: string; status: string };
+
 type BingoRoundSnapshot = {
   id: number;
   status: string;
@@ -20,7 +22,8 @@ type BingoRoundSnapshot = {
   calls: Array<{ number: number; position: number; calledAt: Date }>;
   takenCardNumbers: number[];
   pot: string;
-  winner?: { telegramId: number; name: string; cardNumber: number; payout: string; status: string };
+  winner?: BingoWinner;
+  winners: BingoWinner[];
 };
 
 const roundUpdateListeners = new Set<(snapshot: BingoRoundSnapshot) => void>();
@@ -39,8 +42,8 @@ export async function getBingoRoundSnapshot(roundId?: number): Promise<BingoRoun
     db.query.bingoCalls.findMany({ where: eq(bingoCalls.roundId, round.id), orderBy: [asc(bingoCalls.position)] }),
     db.query.bingoPlayerCards.findMany({ where: eq(bingoPlayerCards.roundId, round.id), columns: { cardNumber: true } }),
   ]);
-  const winner = await getStoredRoundWinner(round.id);
-  return { id: round.id, status: round.status, startedAt: round.startedAt, selectionEndsAt: round.selectionEndsAt, calls, takenCardNumbers: cards.map((card) => card.cardNumber), pot: (cards.length * CARD_STAKE).toFixed(2), winner };
+  const winners = await getStoredRoundWinners(round.id);
+  return { id: round.id, status: round.status, startedAt: round.startedAt, selectionEndsAt: round.selectionEndsAt, calls, takenCardNumbers: cards.map((card) => card.cardNumber), pot: (cards.length * CARD_STAKE).toFixed(2), winner: winners[0], winners };
 }
 
 export async function publishBingoRoundUpdate(roundId?: number) {
@@ -52,6 +55,13 @@ export async function publishBingoRoundUpdate(roundId?: number) {
 function getBingoPayoutAmount() {
   const configured = process.env["BINGO_PAYOUT_AMOUNT"]?.trim();
   return configured && /^\d+(?:\.\d{1,2})?$/.test(configured) ? Number(configured).toFixed(2) : DEFAULT_BINGO_PAYOUT;
+}
+
+function splitPayoutAmount(total: string, winnerCount: number) {
+  const totalCents = Math.round(Number(total) * 100);
+  const baseCents = Math.floor(totalCents / winnerCount);
+  const remainder = totalCents % winnerCount;
+  return Array.from({ length: winnerCount }, (_, index) => ((baseCents + (index < remainder ? 1 : 0)) / 100).toFixed(2));
 }
 
 function winnerCard(grid: Array<number | "star">, called: Set<number>) {
@@ -66,37 +76,71 @@ function winnerCard(grid: Array<number | "star">, called: Set<number>) {
   return lines.some((line) => line.every((index) => marked(grid[index]!))) || corners.every((index) => marked(grid[index]!));
 }
 
-async function getStoredRoundWinner(roundId: number) {
-  const [payout] = await db.select().from(bingoPayouts).where(eq(bingoPayouts.roundId, roundId)).limit(1);
-  if (!payout) return undefined;
-  const [card] = await db.select({ cardNumber: bingoPlayerCards.cardNumber }).from(bingoPlayerCards).where(eq(bingoPlayerCards.id, payout.cardId)).limit(1);
-  const [player] = await db.select({ firstName: telegramUsers.firstName, lastName: telegramUsers.lastName }).from(telegramUsers).where(eq(telegramUsers.telegramId, payout.telegramId)).limit(1);
-  if (!card) return undefined;
-  return { telegramId: payout.telegramId, name: [player?.firstName, player?.lastName].filter(Boolean).join(' '), cardNumber: card.cardNumber, payout: payout.amount, status: payout.status };
+async function getStoredRoundWinners(roundId: number) {
+  const payouts = await db.select({
+    telegramId: bingoPayouts.telegramId,
+    cardNumber: bingoPlayerCards.cardNumber,
+    payout: bingoPayouts.amount,
+    status: bingoPayouts.status,
+    firstName: telegramUsers.firstName,
+    lastName: telegramUsers.lastName,
+  }).from(bingoPayouts)
+    .innerJoin(bingoPlayerCards, eq(bingoPlayerCards.id, bingoPayouts.cardId))
+    .innerJoin(telegramUsers, eq(telegramUsers.telegramId, bingoPayouts.telegramId))
+    .where(eq(bingoPayouts.roundId, roundId))
+    .orderBy(asc(bingoPayouts.id));
+  return payouts.map((payout) => ({
+    telegramId: payout.telegramId,
+    name: [payout.firstName, payout.lastName].filter(Boolean).join(" "),
+    cardNumber: payout.cardNumber,
+    payout: payout.payout,
+    status: payout.status,
+  }));
 }
 
-async function resolveRoundWinner(roundId: number, claimant?: { telegramId: number; cardNumber: number }) {
+async function resolveRoundWinners(roundId: number) {
   return db.transaction(async (tx) => {
     const [round] = await tx.select().from(bingoRounds).where(eq(bingoRounds.id, roundId)).for("update").limit(1);
-    if (!round) return undefined;
-    const calls = await tx.select({ number: bingoCalls.number }).from(bingoCalls).where(eq(bingoCalls.roundId, roundId));
-    const cards = await tx.select({ id: bingoPlayerCards.id, telegramId: bingoPlayerCards.telegramId, cardNumber: bingoPlayerCards.cardNumber, grid: bingoPlayerCards.grid }).from(bingoPlayerCards).where(eq(bingoPlayerCards.roundId, roundId));
-    const called = new Set(calls.map((call) => call.number));
-    let winner = claimant
-      ? cards.find((card) => card.telegramId === claimant.telegramId && card.cardNumber === claimant.cardNumber && winnerCard(card.grid, called))
-      : [...cards].sort((left, right) => left.id - right.id).find((card) => winnerCard(card.grid, called));
-    if (!winner && round.status === "completed") {
-      const [payout] = await tx.select().from(bingoPayouts).where(eq(bingoPayouts.roundId, roundId)).limit(1);
-      if (payout) winner = cards.find((card) => card.id === payout.cardId);
-      if (!winner) return undefined;
-      const player = await tx.select({ firstName: telegramUsers.firstName, lastName: telegramUsers.lastName }).from(telegramUsers).where(eq(telegramUsers.telegramId, winner.telegramId)).limit(1);
-      return { telegramId: winner.telegramId, name: [player[0]?.firstName, player[0]?.lastName].filter(Boolean).join(" "), cardNumber: winner.cardNumber, payout: payout!.amount, status: payout!.status };
+    if (!round) return [] as BingoWinner[];
+    const [calls, cards, storedPayouts] = await Promise.all([
+      tx.select({ number: bingoCalls.number }).from(bingoCalls).where(eq(bingoCalls.roundId, roundId)),
+      tx.select({ id: bingoPlayerCards.id, telegramId: bingoPlayerCards.telegramId, cardNumber: bingoPlayerCards.cardNumber, grid: bingoPlayerCards.grid }).from(bingoPlayerCards).where(eq(bingoPlayerCards.roundId, roundId)),
+      tx.select({
+        telegramId: bingoPayouts.telegramId,
+        cardNumber: bingoPlayerCards.cardNumber,
+        payout: bingoPayouts.amount,
+        status: bingoPayouts.status,
+        firstName: telegramUsers.firstName,
+        lastName: telegramUsers.lastName,
+      }).from(bingoPayouts)
+        .innerJoin(bingoPlayerCards, eq(bingoPlayerCards.id, bingoPayouts.cardId))
+        .innerJoin(telegramUsers, eq(telegramUsers.telegramId, bingoPayouts.telegramId))
+        .where(eq(bingoPayouts.roundId, roundId))
+        .orderBy(asc(bingoPayouts.id)),
+    ]);
+    if (storedPayouts.length) {
+      return storedPayouts.map((payout) => ({
+        telegramId: payout.telegramId,
+        name: [payout.firstName, payout.lastName].filter(Boolean).join(" "),
+        cardNumber: payout.cardNumber,
+        payout: payout.payout,
+        status: payout.status,
+      }));
     }
-    if (!winner || !["playing", "active"].includes(round.status)) return undefined;
-    const result = await awardBingoPayout({ roundId, cardId: winner.id, telegramId: winner.telegramId, amount: getBingoPayoutAmount() }, tx);
+    if (!["playing", "active"].includes(round.status)) return [] as BingoWinner[];
+    const called = new Set(calls.map((call) => call.number));
+    const winningCards = cards.filter((card) => winnerCard(card.grid, called)).sort((left, right) => left.id - right.id);
+    const winningPlayers = [...new Map(winningCards.map((card) => [card.telegramId, card])).values()];
+    if (!winningPlayers.length) return [] as BingoWinner[];
+    const payoutAmounts = splitPayoutAmount(getBingoPayoutAmount(), winningPlayers.length);
+    const winners: BingoWinner[] = [];
+    for (const [index, card] of winningPlayers.entries()) {
+      const result = await awardBingoPayout({ roundId, cardId: card.id, telegramId: card.telegramId, amount: payoutAmounts[index]! }, tx);
+      const [player] = await tx.select({ firstName: telegramUsers.firstName, lastName: telegramUsers.lastName }).from(telegramUsers).where(eq(telegramUsers.telegramId, card.telegramId)).limit(1);
+      winners.push({ telegramId: card.telegramId, name: [player?.firstName, player?.lastName].filter(Boolean).join(" "), cardNumber: card.cardNumber, payout: result.payout.amount, status: result.payout.status });
+    }
     await tx.update(bingoRounds).set({ status: "completed", completedAt: new Date() }).where(and(eq(bingoRounds.id, roundId), inArray(bingoRounds.status, ["playing", "active"])));
-    const player = await tx.select({ firstName: telegramUsers.firstName, lastName: telegramUsers.lastName }).from(telegramUsers).where(eq(telegramUsers.telegramId, winner.telegramId)).limit(1);
-    return { telegramId: winner.telegramId, name: [player[0]?.firstName, player[0]?.lastName].filter(Boolean).join(" "), cardNumber: winner.cardNumber, payout: result.payout.amount, status: result.payout.status };
+    return winners;
   });
 }
 
@@ -174,8 +218,8 @@ export async function advanceBingoRound() {
   logger.info({ roundId: round.id, playerCount: new Set(cards.map((card) => card.telegramId)).size, cardCount: cards.length }, "Bingo players checked before call");
   const calls = await db.query.bingoCalls.findMany({ where: eq(bingoCalls.roundId, round.id), orderBy: [asc(bingoCalls.position)] });
   if (calls.length >= 75) {
-    const winner = await resolveRoundWinner(round.id);
-    if (winner) return { ...round, status: 'completed', selectionEndsAt: null };
+    const winners = await resolveRoundWinners(round.id);
+    if (winners.length) return { ...round, status: 'completed', selectionEndsAt: null };
     await db.update(bingoRounds).set({ status: 'completed', completedAt: new Date() }).where(and(eq(bingoRounds.id, round.id), eq(bingoRounds.status, 'playing')));
     return { ...round, status: 'completed', selectionEndsAt: null };
   }
@@ -184,8 +228,8 @@ export async function advanceBingoRound() {
   const remaining = shuffledNumbers().filter((number) => !calls.some((call) => call.number === number));
   await db.insert(bingoCalls).values({ roundId: round.id, number: remaining[0]!, position: calls.length }).onConflictDoNothing({ target: [bingoCalls.roundId, bingoCalls.position] });
   logger.info({ roundId: round.id, callNumber: remaining[0], callPosition: calls.length + 1 }, "Bingo number called");
-  const winner = await resolveRoundWinner(round.id);
-  return winner ? { ...round, status: 'completed', selectionEndsAt: null } : round;
+  const winners = await resolveRoundWinners(round.id);
+  return winners.length ? { ...round, status: 'completed', selectionEndsAt: null } : round;
 }
 
 async function authenticatedUser(req: Request) {
@@ -304,10 +348,11 @@ router.post("/bingo/claim", async (req, res) => {
     res.status(400).json({ error: "A valid round and card are required" }); return;
   }
   try {
-    const winner = await resolveRoundWinner(roundId, { telegramId: user.telegramId, cardNumber });
+    const winners = await resolveRoundWinners(roundId);
+    const winner = winners.find((item) => item.telegramId === user.telegramId && item.cardNumber === cardNumber);
     if (!winner) { res.status(409).json({ error: "This card does not have a winning pattern" }); return; }
     await publishBingoRoundUpdate(roundId);
-    res.json({ winner });
+    res.json({ winner, winners });
   } catch (error) {
     logger.error({ err: error, roundId, telegramId: user.telegramId, cardNumber }, "Failed to claim Bingo win");
     res.status(503).json({ error: "Bingo claim unavailable" });
