@@ -610,6 +610,61 @@ button:focus-visible, a:focus-visible {
     animation: winner-modal-in .65s cubic-bezier(.22, 1, .36, 1) both;
   }
 
+  .single-winner-modal {
+    max-width: 22rem;
+    padding-top: .25rem;
+  }
+
+  .single-winner-trophy {
+    font-size: 3.25rem;
+  }
+
+  .single-winner-title {
+    margin-top: .65rem;
+    font-size: clamp(2.15rem, 11vw, 3.2rem);
+  }
+
+  .single-winner-prize-label {
+    margin-top: .35rem;
+    font-size: .72rem;
+  }
+
+  .single-winner-prize {
+    font-size: 1.8rem;
+  }
+
+  .single-winner-prize span {
+    font-size: .78rem;
+  }
+
+  .single-winner-summary {
+    margin: .9rem auto 1rem;
+    border-radius: 1.1rem;
+    padding: .7rem .65rem;
+    font-size: .82rem;
+  }
+
+  .single-winner-summary strong {
+    font-size: .9rem;
+  }
+
+  .single-winner-card-frame {
+    max-width: 13rem;
+    border-width: 2px;
+    border-radius: 1rem;
+    padding: .4rem;
+  }
+
+  .single-winner-card-frame .depth-card {
+    padding: .45rem;
+  }
+
+  .single-winner-action {
+    margin-top: .9rem !important;
+    padding: .65rem 1.25rem;
+    font-size: .78rem;
+  }
+
   .winner-trophy {
     font-size: 5rem;
     line-height: 1;

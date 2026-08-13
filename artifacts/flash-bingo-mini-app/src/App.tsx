@@ -663,16 +663,16 @@ function WinnerModal({ card, called, pattern, winnerEffect, prize, winnerName, w
       <div className='winner-confetti' aria-hidden='true'>
         {Array.from({ length: 34 }, (_, index) => <span key={index} className={`confetti-piece confetti-piece-${index % 6}`} />)}
       </div>
-      <div className='winner-modal relative w-full max-w-[430px] text-center'>
-        <div className='winner-trophy' aria-hidden='true'>🏆</div>
-        <p className='winner-title game-over-heading'>GAME OVER</p>
-        <p className='winner-prize-label'>YOUR PRIZE</p>
-        <p className='winner-prize'>{Number(prize).toLocaleString("en-US", { minimumFractionDigits: 2 })} <span>ብር</span></p>
-        <div className='winner-summary'>Name: <strong>{winnerName || '—'}</strong> <span>|</span> Card: <strong>#{card.id}</strong>{winnerCount > 1 && <><span>|</span> Winners: <strong>{winnerCount}</strong></>}</div>
-        <div className='winner-card-frame'>
+      <div className='winner-modal single-winner-modal relative w-full max-w-[430px] text-center'>
+        <div className='winner-trophy single-winner-trophy' aria-hidden='true'>🏆</div>
+        <p className='winner-title game-over-heading single-winner-title'>GAME OVER</p>
+        <p className='winner-prize-label single-winner-prize-label'>YOUR PRIZE</p>
+        <p className='winner-prize single-winner-prize'>{Number(prize).toLocaleString("en-US", { minimumFractionDigits: 2 })} <span>ብር</span></p>
+        <div className='winner-summary single-winner-summary'>Name: <strong>{winnerName || '—'}</strong> <span>|</span> Card: <strong>#{card.id}</strong>{winnerCount > 1 && <><span>|</span> Winners: <strong>{winnerCount}</strong></>}</div>
+        <div className='winner-card-frame single-winner-card-frame'>
           <PlayCard id={card.id} grid={card.grid} called={called} winner={pattern} winnerEffect={winnerEffect} finalNumber={Array.from(called).at(-1)} />
         </div>
-        <button type='button' onClick={continueToSelection} className='mt-6 rounded-xl bg-[hsl(var(--primary))] px-6 py-3 text-sm font-extrabold text-[hsl(var(--primary-foreground))] transition-transform active:scale-95'>ቀጣይ ዙር</button>
+        <button type='button' onClick={continueToSelection} className='single-winner-action mt-6 rounded-xl bg-[hsl(var(--primary))] px-6 py-3 text-sm font-extrabold text-[hsl(var(--primary-foreground))] transition-transform active:scale-95'>ቀጣይ ዙር</button>
       </div>
     </div>
   );
