@@ -617,7 +617,7 @@ type WinnerPattern = { line: number[]; corners: number[] };
 type WinnerSnapshot = {
   key: string;
   winner: NonNullable<RoundData['winner']>;
-  winnerCount: number;
+  winners: NonNullable<RoundData['winners']>;
   card: { id: number; grid: Cell[] };
   pattern: WinnerPattern;
   called: Set<number>;
@@ -673,6 +673,35 @@ function WinnerModal({ card, called, pattern, winnerEffect, prize, winnerName, w
           <PlayCard id={card.id} grid={card.grid} called={called} winner={pattern} winnerEffect={winnerEffect} finalNumber={Array.from(called).at(-1)} />
         </div>
         <button type='button' onClick={continueToSelection} className='mt-6 rounded-xl bg-[hsl(var(--primary))] px-6 py-3 text-sm font-extrabold text-[hsl(var(--primary-foreground))] transition-transform active:scale-95'>ቀጣይ ዙር</button>
+      </div>
+    </div>
+  );
+}
+
+function MultipleWinnerModal({ winners, finalNumber, onContinue }: { winners: NonNullable<RoundData['winners']>; finalNumber: number | null; onContinue: () => void }) {
+  const totalPrize = winners.reduce((total, winner) => total + Number(winner.payout), 0);
+  const finalLetter = finalNumber ? ['B', 'I', 'N', 'G', 'O'][Math.min(4, Math.floor((finalNumber - 1) / 15))] : '?';
+  return (
+    <div className='winner-overlay fixed inset-0 z-50 flex items-center justify-center overflow-y-auto px-4 py-8' role='dialog' aria-modal='true' aria-label='Multiple Bingo winners'>
+      <div className='winner-confetti' aria-hidden='true'>
+        {Array.from({ length: 34 }, (_, index) => <span key={index} className={`confetti-piece confetti-piece-${index % 6}`} />)}
+      </div>
+      <div className='winner-modal multi-winner-modal relative w-full max-w-[430px] text-center'>
+        <div className='winner-trophy' aria-hidden='true'>🏆</div>
+        <p className='winner-title game-over-heading'>GAME OVER</p>
+        <p className='winner-prize-label'>SHARED WINNERS</p>
+        <div className='multi-winner-stats'>
+          <div className='multi-winner-stat'><span className='multi-winner-stat-label'>WINNERS</span><strong className='multi-winner-stat-value'>{winners.length}</strong></div>
+          <div className='multi-winner-stat'><span className='multi-winner-stat-label'>TOTAL PRIZE</span><strong className='multi-winner-stat-value'>{totalPrize.toLocaleString('en-US', { minimumFractionDigits: 2 })} <small>ብር</small></strong></div>
+        </div>
+        <div className='multi-winner-list' aria-label='Winner payouts'>
+          {winners.map((winner, index) => <div className='multi-winner-row' key={`${winner.telegramId ?? winner.name ?? 'winner'}-${winner.cardNumber}`}><div className='multi-winner-identity'><span className='multi-winner-rank'>{index + 1}</span><div><strong>{winner.name || '—'}</strong><span>Winner #{index + 1}</span></div></div><strong className='multi-winner-payout'>{Number(winner.payout).toLocaleString('en-US', { minimumFractionDigits: 2 })} <small>ብር</small></strong></div>)}
+        </div>
+        <div className='multi-winner-final-number-card'>
+          <p className='multi-winner-final-label'>የዘጉበት የመጨረሻ ቁጥር</p>
+          <div className='multi-winner-final-number'><span>{finalLetter}</span><strong>{finalNumber ?? '—'}</strong></div>
+        </div>
+        <button type='button' onClick={onContinue} className='mt-6 rounded-xl bg-[hsl(var(--primary))] px-6 py-3 text-sm font-extrabold text-[hsl(var(--primary-foreground))] transition-transform active:scale-95'>ቀጣይ ዙር</button>
       </div>
     </div>
   );
@@ -815,7 +844,7 @@ function GamePage() {
     const snapshot: WinnerSnapshot = {
       key: winnerKey,
       winner: serverWinner,
-      winnerCount: serverWinners.length,
+      winners: serverWinners,
       card: winnerCard,
       pattern: winnerPattern,
       called: new Set(called),
@@ -869,7 +898,7 @@ function GamePage() {
     }
     setGameOverError('');
   }, [round?.status, serverWinner, setLocation, visibleWinnerSnapshot, winnerCard, winnerPattern]);
-  return <AppShell tab={tab} setTab={setTab}>{tab === 'wallet' ? <WalletPanel /> : <div className="min-h-0 flex-1 overflow-y-auto bg-[linear-gradient(180deg,hsl(161_42%_9%),hsl(161_48%_7%))] p-3"><div className="space-y-3"><div className="flex items-center justify-between gap-3 text-[10px] font-bold tracking-[.12em] text-[hsl(var(--muted-foreground))]"><span>{connected ? '● LIVE' : '○ CONNECTING...'}</span><div className="flex items-center gap-1.5"><button type="button" data-testid="button-toggle-game-debug" aria-expanded={showDiagnostics} onClick={() => setShowDiagnostics((value) => !value)} className="depth-action rounded-xl border border-[hsl(var(--accent)/.4)] bg-[hsl(161_35%_15%)] px-2.5 py-2 text-[hsl(var(--accent))] transition-transform active:scale-95">DEBUG</button><button type="button" data-testid="button-refresh-game" aria-label="Refresh game" onClick={refreshGame} className="depth-action inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-[hsl(161_35%_15%)] px-3 py-2 text-[hsl(var(--foreground)/.8)] transition-transform active:scale-95"><RotateCcw className="h-3.5 w-3.5" /> REFRESH</button></div></div>{showDiagnostics && <DebugMonitor connected={connected} round={round} gameState={gameState} diagnostics={diagnostics} audioStatus={audioStatus} />}<CalledBoard called={called} latest={current} /><CalledPanel current={current} muted={muted} onToggle={() => setMuted((value) => !value)} callIndex={gameState.calledBalls.length} called={called} /><div className="grid grid-cols-2 gap-2.5">{displayCards.map((card) => { const pattern = winnerMatch?.card.id === card.id ? winnerMatch.pattern : null; return <PlayCard key={card.id} {...card} called={called} winner={pattern} />; })}</div><div className="flex items-center justify-center gap-2 pb-2 text-[11px] text-[hsl(var(--muted-foreground))]"><Sparkles className="h-3.5 w-3.5 text-[hsl(var(--primary))]" /> ቁጥሮች በየ 3 ሰከንዱ ይጠራሉ</div></div></div>}{visibleWinnerSnapshot ? <WinnerModal card={visibleWinnerSnapshot.card} called={visibleWinnerSnapshot.called} pattern={visibleWinnerSnapshot.pattern} winnerEffect={visibleWinnerSnapshot.winnerEffect} prize={visibleWinnerSnapshot.winner.payout} winnerName={visibleWinnerSnapshot.winner.name ?? ''} winnerCount={visibleWinnerSnapshot.winnerCount} /> : showServerWinner && serverWinner && winnerCard && winnerPattern ? <WinnerModal card={winnerCard} called={called} pattern={winnerPattern} winnerEffect={winnerEffect} prize={serverWinner.payout} winnerName={serverWinner.name ?? ''} winnerCount={serverWinners.length} /> : showServerWinner && serverWinner && !gameOverError ? <RoundFinishedModal winnerName={serverWinner.name ?? ''} cardNumber={serverWinner.cardNumber} prize={serverWinner.payout} onContinue={() => { sessionStorage.removeItem('selectedSlots'); setLocation('/'); }} /> : gameOverError ? <GameOverError message={gameOverError} onRetry={refreshGame} /> : null}</AppShell>;
+  return <AppShell tab={tab} setTab={setTab}>{tab === 'wallet' ? <WalletPanel /> : <div className="min-h-0 flex-1 overflow-y-auto bg-[linear-gradient(180deg,hsl(161_42%_9%),hsl(161_48%_7%))] p-3"><div className="space-y-3"><div className="flex items-center justify-between gap-3 text-[10px] font-bold tracking-[.12em] text-[hsl(var(--muted-foreground))]"><span>{connected ? '● LIVE' : '○ CONNECTING...'}</span><div className="flex items-center gap-1.5"><button type="button" data-testid="button-toggle-game-debug" aria-expanded={showDiagnostics} onClick={() => setShowDiagnostics((value) => !value)} className="depth-action rounded-xl border border-[hsl(var(--accent)/.4)] bg-[hsl(161_35%_15%)] px-2.5 py-2 text-[hsl(var(--accent))] transition-transform active:scale-95">DEBUG</button><button type="button" data-testid="button-refresh-game" aria-label="Refresh game" onClick={refreshGame} className="depth-action inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-[hsl(161_35%_15%)] px-3 py-2 text-[hsl(var(--foreground)/.8)] transition-transform active:scale-95"><RotateCcw className="h-3.5 w-3.5" /> REFRESH</button></div></div>{showDiagnostics && <DebugMonitor connected={connected} round={round} gameState={gameState} diagnostics={diagnostics} audioStatus={audioStatus} />}<CalledBoard called={called} latest={current} /><CalledPanel current={current} muted={muted} onToggle={() => setMuted((value) => !value)} callIndex={gameState.calledBalls.length} called={called} /><div className="grid grid-cols-2 gap-2.5">{displayCards.map((card) => { const pattern = winnerMatch?.card.id === card.id ? winnerMatch.pattern : null; return <PlayCard key={card.id} {...card} called={called} winner={pattern} />; })}</div><div className="flex items-center justify-center gap-2 pb-2 text-[11px] text-[hsl(var(--muted-foreground))]"><Sparkles className="h-3.5 w-3.5 text-[hsl(var(--primary))]" /> ቁጥሮች በየ 3 ሰከንዱ ይጠራሉ</div></div></div>}{visibleWinnerSnapshot && visibleWinnerSnapshot.winners.length > 1 ? <MultipleWinnerModal winners={visibleWinnerSnapshot.winners} finalNumber={Array.from(visibleWinnerSnapshot.called).at(-1) ?? null} onContinue={() => { sessionStorage.removeItem('selectedSlots'); setLocation('/'); }} /> : visibleWinnerSnapshot ? <WinnerModal card={visibleWinnerSnapshot.card} called={visibleWinnerSnapshot.called} pattern={visibleWinnerSnapshot.pattern} winnerEffect={visibleWinnerSnapshot.winnerEffect} prize={visibleWinnerSnapshot.winner.payout} winnerName={visibleWinnerSnapshot.winner.name ?? ''} winnerCount={visibleWinnerSnapshot.winners.length} /> : showServerWinner && serverWinners.length > 1 ? <MultipleWinnerModal winners={serverWinners} finalNumber={Array.from(called).at(-1) ?? null} onContinue={() => { sessionStorage.removeItem('selectedSlots'); setLocation('/'); }} /> : showServerWinner && serverWinner && winnerCard && winnerPattern ? <WinnerModal card={winnerCard} called={called} pattern={winnerPattern} winnerEffect={winnerEffect} prize={serverWinner.payout} winnerName={serverWinner.name ?? ''} winnerCount={serverWinners.length} /> : showServerWinner && serverWinner && !gameOverError ? <RoundFinishedModal winnerName={serverWinner.name ?? ''} cardNumber={serverWinner.cardNumber} prize={serverWinner.payout} onContinue={() => { sessionStorage.removeItem('selectedSlots'); setLocation('/'); }} /> : gameOverError ? <GameOverError message={gameOverError} onRetry={refreshGame} /> : null}</AppShell>;
 }
 
 function AppShell({ children, tab, setTab }: { children: ReactNode; tab: Tab; setTab: (tab: Tab) => void }) {
