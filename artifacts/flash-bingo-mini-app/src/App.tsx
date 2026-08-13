@@ -48,6 +48,7 @@ const MAX_CARDS = 4;
 const TOTAL_NUMBERS = 500;
 const STAKE = 4;
 const START_COUNTDOWN = 60;
+const WINNER_DISPLAY_DURATION = 8000;
 const GAME_ID = '#86195';
 const CALL_INTERVAL = 3000;
 const ballAudioSources: Record<number, string> = {
@@ -612,6 +613,14 @@ function CalledPanel({ current, muted, onToggle, callIndex, called }: { current:
 }
 
 type WinnerPattern = { line: number[]; corners: number[] };
+type WinnerSnapshot = {
+  key: string;
+  winner: NonNullable<RoundData['winner']>;
+  card: { id: number; grid: Cell[] };
+  pattern: WinnerPattern;
+  called: Set<number>;
+  winnerEffect: number;
+};
 
 function findWinnerPattern(grid: Cell[], called: Set<number>): WinnerPattern | null {
   const isMarked = (cell: Cell) => cell === 'star' || (typeof cell === 'number' && called.has(cell));
@@ -725,6 +734,10 @@ function GamePage() {
   const backgroundAudioRef = useRef<HTMLAudioElement | null>(null);
   const ballAudioRef = useRef<HTMLAudioElement | null>(null);
   const claimedPatternRef = useRef<string | null>(null);
+  const [winnerSnapshot, setWinnerSnapshot] = useState<WinnerSnapshot | null>(null);
+  const [expiredWinnerKey, setExpiredWinnerKey] = useState<string | null>(null);
+  const winnerSnapshotRef = useRef<WinnerSnapshot | null>(null);
+  const winnerSnapshotTimerRef = useRef<number | null>(null);
   const winnerEffect = String(round?.id ?? roundId ?? '').split('').reduce((total, character) => total + character.charCodeAt(0), 0) % 4;
   useEffect(() => {
     const audio = new Audio('/audio/bg-music.mp3');
@@ -785,19 +798,48 @@ function GamePage() {
     if (!serverWinner || !winnerCard) return null;
     return winnerMatch?.pattern ?? findWinnerPattern(winnerCard.grid, called) ?? { line: [], corners: [] };
   }, [called, serverWinner, winnerCard, winnerMatch]);
+  const activeWinnerKey = serverWinner ? `${round?.id ?? roundId ?? ''}:${serverWinner.cardNumber}` : null;
+  const winnerKey = activeWinnerKey && winnerCard && winnerPattern ? activeWinnerKey : null;
   useEffect(() => {
-    if (!serverWinner || location.startsWith('/winner')) return;
+    if (!winnerKey || !serverWinner || !winnerCard || !winnerPattern || winnerSnapshotRef.current?.key === winnerKey) return;
+    const snapshot: WinnerSnapshot = {
+      key: winnerKey,
+      winner: serverWinner,
+      card: winnerCard,
+      pattern: winnerPattern,
+      called: new Set(called),
+      winnerEffect,
+    };
+    winnerSnapshotRef.current = snapshot;
+    setWinnerSnapshot(snapshot);
+    setExpiredWinnerKey(null);
+    if (winnerSnapshotTimerRef.current !== null) window.clearTimeout(winnerSnapshotTimerRef.current);
+    winnerSnapshotTimerRef.current = window.setTimeout(() => {
+      if (winnerSnapshotRef.current?.key !== winnerKey) return;
+      winnerSnapshotRef.current = null;
+      setWinnerSnapshot(null);
+      setExpiredWinnerKey(winnerKey);
+      setLocation('/');
+    }, WINNER_DISPLAY_DURATION);
+  }, [setLocation, winnerKey]);
+  useEffect(() => () => {
+    if (winnerSnapshotTimerRef.current !== null) window.clearTimeout(winnerSnapshotTimerRef.current);
+  }, []);
+  const visibleWinnerSnapshot = winnerSnapshot && (!activeWinnerKey || winnerSnapshot.key === activeWinnerKey) ? winnerSnapshot : null;
+  const showServerWinner = Boolean(serverWinner && activeWinnerKey !== expiredWinnerKey);
+  const announcedWinnerKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!serverWinner || !winnerKey || announcedWinnerKeyRef.current === winnerKey) return;
+    announcedWinnerKeyRef.current = winnerKey;
     backgroundAudioRef.current?.pause();
     if (!muted) {
       const audio = new Audio('/audio/bingo-claim.mp3');
       audio.volume = 1;
       void audio.play().catch(() => undefined);
     }
-    const timer = window.setTimeout(() => setLocation(`/winner?round=${encodeURIComponent(String(round?.id ?? roundId ?? ''))}`), 1500);
-    return () => window.clearTimeout(timer);
-  }, [location, muted, round?.id, roundId, serverWinner, setLocation]);
+  }, [muted, serverWinner, winnerKey]);
   useEffect(() => {
-    if (round?.status === 'selecting') {
+    if (round?.status === 'selecting' && !visibleWinnerSnapshot) {
       sessionStorage.removeItem('selectedSlots');
       setLocation('/');
       return;
@@ -815,8 +857,8 @@ function GamePage() {
       return;
     }
     setGameOverError('');
-  }, [round?.status, serverWinner, setLocation, winnerCard, winnerPattern]);
-  return <AppShell tab={tab} setTab={setTab}>{tab === 'wallet' ? <WalletPanel /> : <div className="min-h-0 flex-1 overflow-y-auto bg-[linear-gradient(180deg,hsl(161_42%_9%),hsl(161_48%_7%))] p-3"><div className="space-y-3"><div className="flex items-center justify-between gap-3 text-[10px] font-bold tracking-[.12em] text-[hsl(var(--muted-foreground))]"><span>{connected ? '● LIVE' : '○ CONNECTING...'}</span><div className="flex items-center gap-1.5"><button type="button" data-testid="button-toggle-game-debug" aria-expanded={showDiagnostics} onClick={() => setShowDiagnostics((value) => !value)} className="depth-action rounded-xl border border-[hsl(var(--accent)/.4)] bg-[hsl(161_35%_15%)] px-2.5 py-2 text-[hsl(var(--accent))] transition-transform active:scale-95">DEBUG</button><button type="button" data-testid="button-refresh-game" aria-label="Refresh game" onClick={refreshGame} className="depth-action inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-[hsl(161_35%_15%)] px-3 py-2 text-[hsl(var(--foreground)/.8)] transition-transform active:scale-95"><RotateCcw className="h-3.5 w-3.5" /> REFRESH</button></div></div>{showDiagnostics && <DebugMonitor connected={connected} round={round} gameState={gameState} diagnostics={diagnostics} audioStatus={audioStatus} />}<CalledBoard called={called} latest={current} /><CalledPanel current={current} muted={muted} onToggle={() => setMuted((value) => !value)} callIndex={gameState.calledBalls.length} called={called} /><div className="grid grid-cols-2 gap-2.5">{displayCards.map((card) => { const pattern = winnerMatch?.card.id === card.id ? winnerMatch.pattern : null; return <PlayCard key={card.id} {...card} called={called} winner={pattern} />; })}</div><div className="flex items-center justify-center gap-2 pb-2 text-[11px] text-[hsl(var(--muted-foreground))]"><Sparkles className="h-3.5 w-3.5 text-[hsl(var(--primary))]" /> ቁጥሮች በየ 3 ሰከንዱ ይጠራሉ</div></div></div>}{serverWinner && winnerCard && winnerPattern ? <WinnerModal card={winnerCard} called={called} pattern={winnerPattern} winnerEffect={winnerEffect} prize={serverWinner.payout} winnerName={serverWinner.name ?? ''} /> : serverWinner && !gameOverError ? <RoundFinishedModal winnerName={serverWinner.name ?? ''} cardNumber={serverWinner.cardNumber} prize={serverWinner.payout} onContinue={() => { sessionStorage.removeItem('selectedSlots'); setLocation('/'); }} /> : gameOverError ? <GameOverError message={gameOverError} onRetry={refreshGame} /> : null}</AppShell>;
+  }, [round?.status, serverWinner, setLocation, visibleWinnerSnapshot, winnerCard, winnerPattern]);
+  return <AppShell tab={tab} setTab={setTab}>{tab === 'wallet' ? <WalletPanel /> : <div className="min-h-0 flex-1 overflow-y-auto bg-[linear-gradient(180deg,hsl(161_42%_9%),hsl(161_48%_7%))] p-3"><div className="space-y-3"><div className="flex items-center justify-between gap-3 text-[10px] font-bold tracking-[.12em] text-[hsl(var(--muted-foreground))]"><span>{connected ? '● LIVE' : '○ CONNECTING...'}</span><div className="flex items-center gap-1.5"><button type="button" data-testid="button-toggle-game-debug" aria-expanded={showDiagnostics} onClick={() => setShowDiagnostics((value) => !value)} className="depth-action rounded-xl border border-[hsl(var(--accent)/.4)] bg-[hsl(161_35%_15%)] px-2.5 py-2 text-[hsl(var(--accent))] transition-transform active:scale-95">DEBUG</button><button type="button" data-testid="button-refresh-game" aria-label="Refresh game" onClick={refreshGame} className="depth-action inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-[hsl(161_35%_15%)] px-3 py-2 text-[hsl(var(--foreground)/.8)] transition-transform active:scale-95"><RotateCcw className="h-3.5 w-3.5" /> REFRESH</button></div></div>{showDiagnostics && <DebugMonitor connected={connected} round={round} gameState={gameState} diagnostics={diagnostics} audioStatus={audioStatus} />}<CalledBoard called={called} latest={current} /><CalledPanel current={current} muted={muted} onToggle={() => setMuted((value) => !value)} callIndex={gameState.calledBalls.length} called={called} /><div className="grid grid-cols-2 gap-2.5">{displayCards.map((card) => { const pattern = winnerMatch?.card.id === card.id ? winnerMatch.pattern : null; return <PlayCard key={card.id} {...card} called={called} winner={pattern} />; })}</div><div className="flex items-center justify-center gap-2 pb-2 text-[11px] text-[hsl(var(--muted-foreground))]"><Sparkles className="h-3.5 w-3.5 text-[hsl(var(--primary))]" /> ቁጥሮች በየ 3 ሰከንዱ ይጠራሉ</div></div></div>}{visibleWinnerSnapshot ? <WinnerModal card={visibleWinnerSnapshot.card} called={visibleWinnerSnapshot.called} pattern={visibleWinnerSnapshot.pattern} winnerEffect={visibleWinnerSnapshot.winnerEffect} prize={visibleWinnerSnapshot.winner.payout} winnerName={visibleWinnerSnapshot.winner.name ?? ''} /> : showServerWinner && serverWinner && winnerCard && winnerPattern ? <WinnerModal card={winnerCard} called={called} pattern={winnerPattern} winnerEffect={winnerEffect} prize={serverWinner.payout} winnerName={serverWinner.name ?? ''} /> : showServerWinner && serverWinner && !gameOverError ? <RoundFinishedModal winnerName={serverWinner.name ?? ''} cardNumber={serverWinner.cardNumber} prize={serverWinner.payout} onContinue={() => { sessionStorage.removeItem('selectedSlots'); setLocation('/'); }} /> : gameOverError ? <GameOverError message={gameOverError} onRetry={refreshGame} /> : null}</AppShell>;
 }
 
 function AppShell({ children, tab, setTab }: { children: ReactNode; tab: Tab; setTab: (tab: Tab) => void }) {
