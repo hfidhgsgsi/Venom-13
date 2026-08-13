@@ -65,6 +65,7 @@ function toGameState(snapshot: RoundSnapshot) {
     playersWithCards: snapshot.takenCardNumbers.length,
     netPrizePool: Number(snapshot.pot),
     winner: snapshot.winner,
+    winners: snapshot.winners,
   };
 }
 
@@ -80,7 +81,7 @@ export function attachRealtimeServer(server: HttpServer) {
     io.emit("cards_taken", { roundId: snapshot.id, cardIds: snapshot.takenCardNumbers });
     if (snapshot.winner && previousWinnerRoundId !== snapshot.id) {
       previousWinnerRoundId = snapshot.id;
-      io.emit("winner", { roundId: snapshot.id, ...snapshot.winner });
+      io.emit("winner", { roundId: snapshot.id, ...snapshot.winner, winners: snapshot.winners });
     }
   };
   subscribeToBingoRoundUpdates(broadcastSnapshot);

@@ -11,7 +11,8 @@ type RoundData = {
   calls: Array<{ number: number; position: number; calledAt: string }>;
   takenCardNumbers: number[];
   pot: string;
-  winner?: { name?: string; cardNumber: number; payout: string; status: string };
+  winner?: { telegramId?: number; name?: string; cardNumber: number; payout: string; status: string };
+  winners: Array<{ telegramId?: number; name?: string; cardNumber: number; payout: string; status: string }>;
 };
 
 type ServerCard = { id?: number; cardNumber: number; grid: Cell[] };
@@ -54,7 +55,7 @@ export function useGame(roundId: string | null, pollInterval = 3000) {
       setConnected(false);
       record('socket:disconnect', reason);
     });
-    socket.on('game_state', (state: { roundId: number; phase: 'waiting' | 'playing' | 'finished'; currentBall: number | null; calledBalls: number[]; cardsTaken?: number[]; selectionEndsAt?: string | null; winner?: RoundData['winner']; netPrizePool: number }) => {
+    socket.on('game_state', (state: { roundId: number; phase: 'waiting' | 'playing' | 'finished'; currentBall: number | null; calledBalls: number[]; cardsTaken?: number[]; selectionEndsAt?: string | null; winner?: RoundData['winner']; winners?: RoundData['winners']; netPrizePool: number }) => {
       const previousSocketState = latestSocketState.current;
       // The page can still be subscribed to the finished round while the
       // server has already opened the next one. Never let a delayed event
@@ -72,11 +73,12 @@ export function useGame(roundId: string | null, pollInterval = 3000) {
         takenCardNumbers: state.cardsTaken ?? current?.takenCardNumbers ?? [],
         pot: String(state.netPrizePool),
         winner: state.winner,
+        winners: state.winners ?? (state.winner ? [state.winner] : []),
       }));
     });
     socket.on('cards_taken', (data: { cardIds?: number[] }) => record('socket:cards_taken', `cards=${data.cardIds?.length ?? 0}`));
     socket.on('round_reset', (data: { roundId?: number }) => record('socket:round_reset', `round=${data.roundId ?? 'unknown'}`));
-    socket.on('winner', (data: { roundId?: number; telegramId?: number; name?: string; cardNumber?: number; payout?: string; status?: string }) => {
+    socket.on('winner', (data: { roundId?: number; telegramId?: number; name?: string; cardNumber?: number; payout?: string; status?: string; winners?: RoundData['winners'] }) => {
       record('socket:winner', `${data.name ?? 'unknown'} card=${data.cardNumber ?? 'unknown'}`);
       const cardNumber = data.cardNumber;
       if (!data.roundId || typeof cardNumber !== 'number' || !Number.isInteger(cardNumber) || !data.payout) return;
@@ -89,7 +91,7 @@ export function useGame(roundId: string | null, pollInterval = 3000) {
       };
       latestSocketState.current = { roundId: data.roundId, callCount: latestSocketState.current?.callCount ?? 0 };
       setRound((current) => current && current.id === data.roundId
-        ? { ...current, status: 'completed', winner }
+        ? { ...current, status: 'completed', winner, winners: data.winners ?? [winner] }
         : current);
     });
     return () => { socket.disconnect(); };
@@ -115,7 +117,7 @@ export function useGame(roundId: string | null, pollInterval = 3000) {
       }
       const socketHasNewerCalls = socketState?.roundId === nextRound.id && socketState.callCount > nextRound.calls.length;
       record('api:round', `round=${nextRound.id} status=${nextRound.status} calls=${nextRound.calls.length}${socketHasNewerCalls ? ' stale-skipped' : ''}`);
-      if (!socketHasNewerCalls) setRound(nextRound);
+      if (!socketHasNewerCalls) setRound({ ...nextRound, winners: nextRound.winners ?? (nextRound.winner ? [nextRound.winner] : []) });
       setCards(cardData.cards.map((card) => ({ id: card.cardNumber, grid: card.grid })));
     };
     const refresh = () => {
